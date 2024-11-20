@@ -1,0 +1,692 @@
+---
+pagetitle: "general"
+---
+
+```{r setup_3}
+# Source
+source("0_load_eeg.R")
+
+# Resave text size
+text_size <- 20
+
+# Make lists
+exp_list <- seq(-36, 36, 12)
+trial_list <- seq(-288, 288, 96)
+prime_levs <- c("identity", "competitor", "unrelated")
+prime_labs <- c("Identity", "Competitor", "Unrelated")
+```
+
+```{r eeg_par_sum}
+# Number of original participants
+eeg_par_all <- nrow(eeg_lhq)
+
+# Number of eligible participants
+eeg_par_elig <- nrow(eeg_lhq %>% dplyr::filter(health_flag == 0))
+
+# Calculate age stats
+eeg_par_age <- eeg_lhq %>%
+  summarise(mean = round(mean(demo_age), 0),
+            sd = round(sd(demo_age), 0),
+            min = min(demo_age), 
+            max = max(demo_age)) %>%
+  ungroup() %>%
+  mutate(age = sprintf("*M* = %.0f, *SD* = %.0f, Min = %.0f, Max = %.0f", mean, sd, min, max)) %>%
+  pull(age)
+
+# Count per category
+eeg_par_sex <- eeg_lhq %>%
+  group_by(demo_gender) %>%
+  summarise(count = n(), .groups = "keep") %>%
+  mutate(report = paste(demo_gender, count, sep = " = "),
+         temp = 1) %>%
+  group_by(temp) %>%
+  summarise(gender = toString(report)) %>%
+  pull(gender)
+```
+
+```{r eeg_vot_load}
+# Load EEG VOT info
+stim_full <- all_trial_dat %>% 
+  select(target, target_cond, stim_onset, vot) %>% 
+  distinct()
+
+# Make table
+on_vot <- stim_full %>%
+  distinct() %>%
+  dplyr::filter(stim_onset %in% c("p", "t", "k")) %>%
+  group_by(target_cond, stim_onset) %>%
+  summarise(n = n(),
+            mean = round(mean(vot),0),
+            sd = round(sd(vot),0),
+            min = round(min(vot),0),
+            max = round(max(vot),0), .groups = "keep") %>%
+  mutate(range = paste(min, max, sep = "-")) %>%
+  select(-c(min, max)) %>% 
+  ungroup() %>%
+  mutate(stim_onset = sprintf("/%s/", stim_onset),
+         stim_onset = factor(stim_onset, levels = c("/p/", "/t/", "/k/")),
+         target_cond = factor(target_cond, levels = c("exposure", "test"),
+                              labels = c("Exposure", "Test"))) %>%
+  arrange(target_cond, stim_onset)
+```
+
+```{r omni_behave_1}
+# Run model
+omni_behave <- glmer(acc ~ target_cond*trial_cent + 
+                       block_order + vot_cent + freq_cent +
+             (1|prime:target) + (target_cond|id),
+           data = behave_trials_clean,
+           nAGQ = 0,
+           family = "binomial")
+
+# Model comparison
+omni_behave_comp <- Anova(omni_behave, test = "Chi", type = "II")
+
+# Get means
+omni_behave_means <- emmeans(omni_behave, ~ target_cond*trial_cent, 
+                           at = list(trial_cent = trial_list))
+
+# Format
+omni_behave_form <- omni_behave_means %>%
+  summary(type = "response") %>%
+  mutate(target_cond = factor(target_cond,
+                              levels = c("test", "filler"),
+                              labels = c("Test", "Filler")))
+
+# Pairwise comparisons
+omni_behave_cont <- omni_behave_means %>%
+  pairs(by = "trial_cent") %>%
+  data.frame() %>%
+  dplyr::filter(`p.value` <= .05) %>%
+  rowwise() %>%
+  mutate(labs = labs_func(p.value))
+
+# Mean values by block
+behave_dat_sum <- behave_trials_clean %>%
+  group_by(id, exp_block, target_cond) %>%
+  summarise(mean_acc = mean(acc), .groups = "keep") %>%
+  ungroup() %>%
+  mutate(target_cond = factor(target_cond,
+                              levels = c("test", "filler"),
+                              labels = c("Test", "Filler")),
+         exp_block = factor(exp_block))
+```
+
+```{r behave_plot_1}
+# Plot
+behave_plot_1 <- ggplot(data = behave_dat_sum,
+                        aes(x = exp_block, y = mean_acc, 
+                            color = target_cond, fill = target_cond)) +
+  geom_half_boxplot(alpha = 0.5, show.legend = FALSE, outlier.shape = NA) +
+  geom_half_point(alpha = 0.5, show.legend = FALSE) +
+  scale_color_manual(values = c("#41b6c4", "#bbbbbb")) +
+  scale_fill_manual(values = c("#41b6c4", "#bbbbbb")) +
+  labs(x = "Experiment block",
+       y = "Mean accuracy by participant",
+       color = "Target type", 
+       fill = "Target type") +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        text = element_text(family = font_fam, size = text_size),
+        axis.ticks = element_blank(),
+        plot.title = element_text(size = text_size, hjust = 0.5))
+```
+
+```{r behave_plot_2}
+# Plot
+behave_plot_2 <- ggplot() +
+  geom_point(data = omni_behave_form,
+             mapping = aes(x = trial_cent, y = prob, color = target_cond),
+             size = g_point*1.25, position = position_dodge(width = g_dodge*2)) +
+  geom_line(data = omni_behave_form,
+             mapping = aes(x = trial_cent, y = prob, color = target_cond),
+            size = g_line, position = position_dodge(width = g_dodge*2)) +
+  geom_errorbar(data = omni_behave_form,
+             mapping = aes(x = trial_cent, y = prob, color = target_cond,
+                       ymin = `asymp.LCL`, ymax = `asymp.UCL`),
+             size = g_line, width = 0, position = position_dodge(width = g_dodge*2)) +
+  geom_text(data = omni_behave_cont,
+            mapping = aes(x = trial_cent, y = 0.995, label = labs),
+            fontface = "bold", size = sig_size) +
+  scale_color_manual(values = c("#41b6c4", "#bbbbbb")) +
+  scale_x_continuous(breaks = trial_list) +
+  scale_y_continuous(breaks = seq(0.85, 1.00, 0.05)) +
+  coord_cartesian(xlim = c(min(trial_list), max(trial_list)), ylim = c(0.85, 1.00)) +
+  labs(x = "Trial (mean-centered)",
+       y = "Estimated marginal mean accuracy",
+       color = "Target type", 
+       fill = "Target type") +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        text = element_text(family = font_fam, size = text_size),
+        axis.ticks = element_blank(),
+        plot.title = element_text(size = text_size, hjust = 0.5))
+```
+
+```{r behave_plot_save}
+behave_plot_combo <- (behave_plot_1 + behave_plot_2) +
+  plot_layout(nrow = 1, guides = "collect") &
+  theme(legend.position = "bottom",
+        text = element_text(family = font_fam, size = text_size),
+        axis.ticks = element_blank(),
+        plot.title = element_text(size = text_size, hjust = 0.5))
+
+# Save plot and crop to remove white space
+ggsave("../poster/behave_plot.png", behave_plot_combo,
+       width = 16, height = 6, unit = "in", dpi = 300)
+knitr::plot_crop("../poster/behave_plot.png", quiet = TRUE)
+```
+
+```{r omni_test_1}
+# Run model
+omni_test <- glmer(acc ~ prime_cond*exp_cent + 
+                     block_order + vot_cent + freq_cent +
+             (1|prime:target) + (prime_cond|id),
+           data = test_trial_dat_clean,
+           nAGQ = 0,
+           family = "binomial")
+
+# Model comparison
+omni_test_comp <- Anova(omni_test, test = "Chi", type = "II")
+
+# Get means
+omni_test_means <- emmeans(omni_test, ~ prime_cond*exp_cent, 
+                           at = list(exp_cent = exp_list))
+
+# Format
+omni_test_form <- omni_test_means %>%
+  summary(type = "response") %>%
+  mutate(prime_cond = factor(prime_cond,
+                             levels = prime_levs,
+                             labels = prime_labs))
+
+# Pairwise comparisons
+omni_test_cont <- omni_test_means %>%
+  pairs(adj = "hommel", by = "exp_cent") %>%
+  data.frame() %>%
+  dplyr::filter(`p.value` <= .05) %>%
+  rowwise() %>%
+  mutate(labs = labs_func(p.value),
+         ypos = case_when(
+           contrast == "identity - unrelated" ~ 1.01,
+           contrast == "identity - competitor" ~ 1.00,
+           contrast == "competitor - unrelated" ~ 0.99
+         ),
+         x = case_when(
+           contrast == "identity - unrelated" ~ exp_cent - 5,
+           contrast == "identity - competitor" ~ exp_cent - 4,
+           contrast == "competitor - unrelated" ~ exp_cent - 1
+         ),
+         xend = case_when(
+           contrast == "identity - unrelated" ~ exp_cent + 5,
+           contrast == "identity - competitor" ~ exp_cent + 1,
+           contrast == "competitor - unrelated" ~ exp_cent + 4
+         ),
+         xpos = mean(c(x, xend)),
+         y = ypos - 0.0025)
+
+# Mean values by block
+test_trial_sum <- test_trial_dat_clean %>%
+  group_by(id, exp_block, prime_cond) %>%
+  summarise(mean_acc = mean(acc), .groups = "keep") %>%
+  ungroup() %>%
+  mutate(prime_cond = factor(prime_cond,
+                              levels = prime_levs,
+                              labels = prime_labs),
+         exp_block = factor(exp_block))
+```
+
+```{r test_plot_1, include = FALSE}
+# Plot
+test_plot_1 <- ggplot(data = test_trial_sum,
+                      aes(x = exp_block, y = mean_acc, 
+                          color = prime_cond, fill = prime_cond)) +
+  geom_half_boxplot(alpha = 0.5, show.legend = FALSE, outlier.shape = NA) +
+  geom_half_point(alpha = 0.5, show.legend = FALSE) +
+  scale_color_manual(values = col_test) +
+  scale_fill_manual(values = col_test) +
+  scale_y_continuous(breaks = seq(0.65, 1, 0.05)) +
+  labs(x = "Experiment block",
+       y = "Mean accuracy by participant",
+       color = "Prime type", 
+       fill = "Prime type") +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        text = element_text(family = font_fam, size = text_size),
+        axis.ticks = element_blank(),
+        plot.title = element_text(size = text_size, hjust = 0.5))
+```
+
+```{r test_plot_2}
+# Plot
+test_plot_2 <- ggplot() +
+  geom_point(data = omni_test_form,
+             mapping = aes(x = exp_cent, y = prob, color = prime_cond),
+             size = g_point*1.25, position = position_dodge(width = g_dodge)) +
+  geom_line(data = omni_test_form,
+             mapping = aes(x = exp_cent, y = prob, color = prime_cond),
+            size = g_line, position = position_dodge(width = g_dodge)) +
+  geom_errorbar(data = omni_test_form,
+             mapping = aes(x = exp_cent, y = prob, color = prime_cond,
+                       ymin = `asymp.LCL`, ymax = `asymp.UCL`),
+             size = g_line, width = 0, position = position_dodge(width = g_dodge)) +
+  geom_text(data = omni_test_cont,
+            mapping = aes(x = xpos, y = ypos, label = labs),
+            fontface = "bold", size = sig_size) +
+  geom_segment(data = omni_test_cont,
+            mapping = aes(x = x, xend = xend, y = y)) +
+  scale_color_manual(values = col_test) +
+  scale_x_continuous(breaks = exp_list) +
+  scale_y_continuous(breaks = seq(0.8, 1.00, 0.05)) +
+  coord_cartesian(xlim = c(min(exp_list) - 0.25, max(exp_list)), ylim = c(0.8, 1.009)) +
+  labs(x = "Amount of exposure (mean-centered)",
+       y = "Estimated marginal mean accuracy",
+       color = "Prime type", 
+       fill = "Prime type") +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        text = element_text(family = font_fam, size = text_size),
+        axis.ticks = element_blank(),
+        plot.title = element_text(size = text_size, hjust = 0.5))
+```
+
+```{r test_plot_save}
+# Combine
+test_plot_combo <- (test_plot_1 + test_plot_2) +
+  plot_layout(nrow = 1, guides = "collect") &
+  theme(legend.position = "bottom",
+        text = element_text(family = font_fam, size = text_size),
+        axis.ticks = element_blank(),
+        plot.title = element_text(size = text_size, hjust = 0.5))
+
+# Save plot and crop to remove white space
+ggsave("../poster/test_plot.png", test_plot_combo,
+       width = 16, height = 6, unit = "in", dpi = 300)
+knitr::plot_crop("../poster/behave_plot.png", quiet = TRUE)
+```
+
+```{r omni_n1}
+# Run model
+omni_n1 <- lmer(volt ~ prime_cond*exp_cent + 
+                  block_order + vot_cent + freq_cent +
+                  (1|prime:target) + (1|id) + (1|chan),
+                data = erp_n1)
+# did not converge with random intercept for prime:target; reduced to target
+# second attempt did not converge; swapped prime:target back in and removed random by-participant slope for prime_cond
+
+# Model comparison
+omni_n1_comp <- Anova(omni_n1, test = "Chi", type = "II")
+
+# Means
+omni_n1_means <- emmeans(omni_n1, ~ prime_cond*exp_cent, 
+                         at = list(exp_cent = exp_list))
+
+# Pairwise comparisons
+omni_n1_cont <- omni_n1_means %>% 
+  pairs(adj = "hommel", by = "exp_cent") %>%
+  data.frame() %>%
+  dplyr::filter(`p.value` <= .05) %>%
+  rowwise() %>%
+  mutate(labs = labs_func(p.value),
+         ypos = case_when(
+           contrast == "identity - unrelated" ~ -4.3,
+           contrast == "identity - competitor" ~ -3.9,
+           contrast == "competitor - unrelated" ~ -3.5
+         ),
+         x = case_when(
+           contrast == "identity - unrelated" ~ exp_cent - 5,
+           contrast == "identity - competitor" ~ exp_cent - 4,
+           contrast == "competitor - unrelated" ~ exp_cent - 1
+         ),
+         xend = case_when(
+           contrast == "identity - unrelated" ~ exp_cent + 5,
+           contrast == "identity - competitor" ~ exp_cent + 1,
+           contrast == "competitor - unrelated" ~ exp_cent + 4
+         ),
+         xpos = mean(c(x, xend)),
+         y = ypos + 0.22)
+
+# Format means
+omni_n1_form <- omni_n1_means %>%
+  summary(type = "response") %>%
+  mutate(prime_cond = factor(prime_cond, 
+                             levels = prime_levs,
+                             labels = prime_labs))
+
+# By-participant means
+n1_block_means <- erp_n1 %>%
+  group_by(id, exp_block, prime_cond) %>%
+  summarise(mean_volt = mean(volt),
+            .groups = "keep") %>%
+  ungroup() %>%
+  mutate(prime_cond = factor(prime_cond, 
+                             levels = prime_levs,
+                             labels = prime_labs))
+```
+
+```{r omni_p2}
+# Run model
+omni_p2 <- lmer(volt ~ prime_cond*exp_cent + 
+                  block_order + vot_cent + freq_cent +
+                  (1|prime:target) + (1|id) + (1|chan),
+                data = erp_p2)
+# did not converge with random intercept for prime:target; reduced to target
+# second attempt did not converge; swapped prime:target back in and removed random by-participant slope for prime_cond
+
+# Model comparison
+omni_p2_comp <- Anova(omni_p2, test = "Chi", type = "II")
+
+# Means
+omni_p2_means <- emmeans(omni_p2, ~ prime_cond*exp_cent, 
+                         at = list(exp_cent = exp_list))
+
+# Pairwise comparisons
+omni_p2_cont <- omni_p2_means %>% 
+  pairs(adj = "hommel", by = "exp_cent")  %>%
+  data.frame() %>%
+  dplyr::filter(`p.value` <= .05)
+
+# Format means
+omni_p2_form <- omni_p2_means %>%
+  summary(type = "response") %>%
+  mutate(prime_cond = factor(prime_cond, 
+                             levels = prime_levs,
+                             labels = prime_labs))
+
+# By-participant means
+p2_block_means <- erp_p2 %>%
+  group_by(id, exp_block, prime_cond) %>%
+  summarise(mean_volt = mean(volt),
+            .groups = "keep") %>%
+  ungroup() %>%
+  mutate(prime_cond = factor(prime_cond, 
+                             levels = prime_levs,
+                             labels = prime_labs))
+```
+
+```{r omni_n400}
+# Run model
+omni_n4 <- lmer(volt ~ prime_cond*exp_cent + 
+                  block_order + vot_cent + freq_cent +
+                  (1|prime:target) + (prime_cond|id) + (1|chan),
+                data = erp_n4)
+
+# Model comparison
+omni_n4_comp <- Anova(omni_n4, test = "Chi", type = "II")
+
+# Means
+omni_n4_means <- emmeans(omni_n4, ~ prime_cond*exp_cent, 
+                         at = list(exp_cent = exp_list))
+
+# Pairwise comparisons
+omni_n4_cont <- omni_n4_means %>% 
+  pairs(adj = "hommel", by = "exp_cent") %>%
+  data.frame() %>%
+  dplyr::filter(`p.value` <= .05) %>%
+  rowwise() %>%
+  mutate(labs = labs_func(p.value),
+         ypos = case_when(
+           contrast == "identity - unrelated" ~ -0.25,
+           contrast == "identity - competitor" ~ -0.55,
+           contrast == "competitor - unrelated" ~ -0.85
+         ),
+         x = case_when(
+           contrast == "identity - unrelated" ~ exp_cent - 5,
+           contrast == "identity - competitor" ~ exp_cent - 4,
+           contrast == "competitor - unrelated" ~ exp_cent - 1
+         ),
+         xend = case_when(
+           contrast == "identity - unrelated" ~ exp_cent + 5,
+           contrast == "identity - competitor" ~ exp_cent + 1,
+           contrast == "competitor - unrelated" ~ exp_cent + 4
+         ),
+         xpos = mean(c(x, xend)),
+         y = ypos - 0.02)
+
+# Format means
+omni_n4_form <- omni_n4_means %>%
+  summary(type = "response") %>%
+  mutate(prime_cond = factor(prime_cond, 
+                             levels = prime_levs,
+                             labels = prime_labs))
+
+# By-participant means
+n4_block_means <- erp_n4 %>%
+  group_by(id, exp_block, prime_cond) %>%
+  summarise(mean_volt = mean(volt),
+            .groups = "keep") %>%
+  mutate(prime_cond = factor(prime_cond, 
+                             levels = prime_levs,
+                             labels = prime_labs))
+```
+
+```{r erp_n1_plot}
+# Set up limits
+y_breaks <- seq(-4.75, 2.85, 0.95)
+y_lims <- c(-4.75, 2.85)
+x_lims <- c(min(exp_list) - 0.4, max(exp_list) + 0.4)
+
+# Plot
+erp_n1_plot <- ggplot() +
+  geom_point(data = omni_n1_form,
+             mapping = aes(x = exp_cent, y = emmean, color = prime_cond),
+             size = g_point*1.25, position = position_dodge(width = g_dodge)) +
+  geom_line(data = omni_n1_form,
+             mapping = aes(x = exp_cent, y = emmean, color = prime_cond),
+            size = g_line, position = position_dodge(width = g_dodge)) +
+  geom_errorbar(data = omni_n1_form,
+             mapping = aes(x = exp_cent, y = emmean, color = prime_cond,
+                       ymin = `asymp.LCL`, ymax = `asymp.UCL`),
+             size = g_line, width = 0, position = position_dodge(width = g_dodge)) +
+  geom_text(data = omni_n1_cont,
+            mapping = aes(x = xpos, y = ypos, label = labs),
+            fontface = "bold", size = sig_size) +
+  geom_segment(data = omni_n1_cont,
+            mapping = aes(x = x, xend = xend, y = y)) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  scale_color_manual(values = col_test, name = "Prime type") +
+  scale_x_continuous(breaks = exp_list) +
+  scale_y_continuous(breaks = y_breaks) +
+  coord_cartesian(xlim = x_lims, ylim = y_lims) +
+  xlab("Amount of exposure (mean-centered)") +
+  ylab("Estimated marginal mean amplitude (μV)") +
+  ggtitle("N1") +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        text = element_text(family = font_fam, size = text_size),
+        axis.ticks = element_blank(),
+        plot.title = element_text(size = text_size, hjust = 0.5))
+```
+
+```{r erp_p2_plot}
+# Plot
+erp_p2_plot <- ggplot() +
+  geom_point(data = omni_p2_form,
+             mapping = aes(x = exp_cent, y = emmean, color = prime_cond),
+             size = g_point*1.25, position = position_dodge(width = g_dodge)) +
+  geom_line(data = omni_p2_form,
+             mapping = aes(x = exp_cent, y = emmean, color = prime_cond),
+            size = g_line, position = position_dodge(width = g_dodge)) +
+  geom_errorbar(data = omni_p2_form,
+             mapping = aes(x = exp_cent, y = emmean, color = prime_cond,
+                       ymin = `asymp.LCL`, ymax = `asymp.UCL`),
+             size = g_line, width = 0, position = position_dodge(width = g_dodge)) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  scale_color_manual(values = col_test, name = "Prime type") +
+  scale_x_continuous(breaks = exp_list) +
+  scale_y_continuous(breaks = y_breaks) +
+  coord_cartesian(xlim = x_lims, ylim = y_lims) +
+  xlab("Amount of exposure (mean-centered)") +
+  ylab("Estimated marginal mean amplitude (μV)") +
+  ggtitle("P2") +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        text = element_text(family = font_fam, size = text_size),
+        axis.ticks = element_blank(),
+        plot.title = element_text(size = text_size, hjust = 0.5))
+```
+
+```{r erp_n4_plot}
+# Plot
+erp_n4_plot <- ggplot() +
+  geom_point(data = omni_n4_form,
+             mapping = aes(x = exp_cent, y = emmean, color = prime_cond),
+             size = g_point*1.25, position = position_dodge(width = g_dodge)) +
+  geom_line(data = omni_n4_form,
+             mapping = aes(x = exp_cent, y = emmean, color = prime_cond),
+            size = g_line, position = position_dodge(width = g_dodge)) +
+  geom_errorbar(data = omni_n4_form,
+             mapping = aes(x = exp_cent, y = emmean, color = prime_cond,
+                       ymin = `asymp.LCL`, ymax = `asymp.UCL`),
+             size = g_line, width = 0, position = position_dodge(width = g_dodge)) +
+  geom_text(data = omni_n4_cont,
+            mapping = aes(x = xpos, y = ypos, label = labs),
+            fontface = "bold", size = sig_size) +
+  geom_segment(data = omni_n4_cont,
+            mapping = aes(x = x, xend = xend, y = y)) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  scale_color_manual(values = col_test, name = "Prime type") +
+  scale_x_continuous(breaks = exp_list) +
+  scale_y_continuous(breaks = y_breaks) +
+  coord_cartesian(xlim = x_lims, ylim = y_lims) +
+  xlab("Amount of exposure (mean-centered)") +
+  ylab("Estimated marginal mean amplitude (μV)") +
+  ggtitle("N400") +
+  theme_minimal() +
+  theme(legend.position = "bottom",
+        text = element_text(family = font_fam, size = text_size),
+        axis.ticks = element_blank(),
+        plot.title = element_text(size = text_size, hjust = 0.5))
+```
+
+```{r erp_plots, include = FALSE, eval = FALSE}
+# Save plots and crop to remove white space
+ggsave("../poster/erp_n1_plot.png", erp_n1_plot,
+       width = 16, height = 8, unit = "in", dpi = 300)
+knitr::plot_crop("../poster/erp_n1_plot.png")
+
+ggsave("../poster/erp_p2_plot.png", erp_p2_plot,
+       width = 16, height = 8, unit = "in", dpi = 300)
+knitr::plot_crop("../poster/erp_p2_plot.png")
+
+ggsave("../poster/erp_n4_plot.png", erp_n4_plot,
+       width = 16, height = 8, unit = "in", dpi = 300)
+knitr::plot_crop("../poster/erp_n4_plot.png")
+```
+
+```{r erp_plots_combo, include = FALSE}
+erp_plot_combo <- (erp_n1_plot + erp_p2_plot + erp_n4_plot) +
+  plot_layout(nrow = 1, guides = "collect", axes = "collect") &
+  theme(legend.position = "bottom",
+        text = element_text(family = font_fam, size = text_size),
+        axis.ticks = element_blank(),
+        plot.title = element_text(size = text_size, hjust = 0.5))
+
+# Save plot and crop to remove white space
+ggsave("../poster/erp_plot_combo.png", erp_plot_combo,
+       width = 16, height = 8, unit = "in", dpi = 300)
+knitr::plot_crop("../poster/erp_plot_combo.png", quiet = TRUE)
+```
+
+```{r corr_1}
+# Subset data
+corr_dat_sub <- corr_dat %>%
+  select(spk_ease, spk_percep, spk_accent_strength, 
+         spk_fluency, acc_lang, acc_sub_region,
+         proact, react, lextale_score, mean_att,
+         mean_acc, mean_n1, mean_p2, mean_n4)
+
+# Rename columns
+colnames(corr_dat_sub) <- c("Ease", "Comprehensibility", "Accent strength",
+                            "English rating", "Language accuracy", "Region accuracy",
+                            "Proactive control", "Reactive control", 
+                            "Receptive vocabulary", "Language attitudes",
+                            "Test accuracy", "Test N1", "Test P2", "Test N400")
+```
+
+```{r corr_2}
+# Compute and save
+corr_list <- psych::corr.test(as.matrix(corr_dat_sub),
+                              adj = "none")
+corr_form <- apa_corr(corr_list)
+
+# Get r and p values
+corr_r <- corr_list$r
+corr_p <- corr_list$p
+
+# Make initial plot
+corr_plot <- ggcorrplot::ggcorrplot(corr_r, hc.order = FALSE, type = "upper", 
+                                    outline.col = "#FFFFFF", lab = FALSE,
+                                    ggtheme = ggplot2::theme_minimal(), 
+                                    colors = col_corr, p.mat = corr_p,
+                                    insig = "pch", pch.cex = 1, pch = 20, 
+                                    pch.col = "#FFFFFF", show.legend = TRUE)
+
+# Get asterisks
+corr_labs <- corr_p  %>%  
+  as.data.frame() %>%
+  mutate_all(labs_func) %>%
+  rownames_to_column(var = "Var1") %>%
+  pivot_longer(cols = c(everything(), -Var1), 
+               names_to = "Var2", values_to = "lab") %>%
+  right_join(corr_plot$data, by = c("Var1", "Var2"))
+
+# Make plot
+corr_plot_fin <- corr_plot +
+  geom_text(aes(x = corr_labs$Var1,
+                y = corr_labs$Var2),
+            label = corr_labs$lab,
+            size = 3*1.5,
+            color = "#000000") +
+  theme(axis.text.y = element_text(hjust = 1),
+        text = element_text(family = font_fam, size = 20),
+        legend.title = element_blank(),
+        legend.ticks = element_blank(),
+        legend.position = "right",
+        legend.key.height = unit(3, "lines"),
+        legend.text = element_text(hjust = 1, size = 10))
+```
+
+```{r corr_4}
+# Save plot and crop to remove white space
+ggsave("../poster/corr_plot_fin.png", corr_plot_fin,
+       width = 8, height = 8, unit = "in", dpi = 300)
+knitr::plot_crop("../poster/corr_plot_fin.png", quiet = TRUE)
+```
+
+```{r corr_3}
+# Make table
+corr_dat_sum <- tibble(meas = colnames(corr_dat_sub),
+                       how_meas = c(rep("Talker judgments", 6),
+                                    rep("AX-CPT", 2),
+                                    "LexTALE", 
+                                    "Debriefing questionnaire",
+                                    rep("Task", 4)),
+                       how_calc = c(rep("Raw selection", 4),
+                                    rep("Proximity to correct option", 2),
+                                    "Ratio of AY to AX mean RT", 
+                                    "Ratio of BX to BY mean RT", 
+                                    "Weighted mean accuracy",
+                                    "Mean selection", 
+                                    "Difference between Identity and Mismatch (Competitor and Unrelated) mean accuracy",
+                                    rep("Absolute value of difference between Identity and Mismatch (Competitor and Unrelated) mean ERPs", 3)),
+                       mean = unlist(lapply(corr_dat_sub, mean, na.rm = TRUE)),
+                       sd = unlist(lapply(corr_dat_sub, sd, na.rm = TRUE)),
+                       min = unlist(lapply(corr_dat_sub, min, na.rm = TRUE)),
+                       max = unlist(lapply(corr_dat_sub, max, na.rm = TRUE))) %>%
+  rowwise() %>%
+  mutate(cent = sprintf("%.2f (%.2f)", mean, sd),
+         range = sprintf("%.2f - %.2f", min, max))
+
+kbl(corr_dat_sum %>% select(meas, how_meas, how_calc, cent, range),
+    col.names = c("Measure", "Instrument", "Calculation", "M (SD)", "Range"),
+    format = "html", linesep = "", booktabs = TRUE, escape = FALSE) %>%
+  row_spec(row = 0, italic = TRUE, align = "c") %>%
+  column_spec(1, width_max = "150px") %>%
+  column_spec(2, width_max = "100px") %>%
+  column_spec(3, width_max = "300px") %>%
+  collapse_rows(row_group_label_position = "stack") %>%
+  kable_styling(html_font = "Avenir", font_size = 12, full_width = FALSE) %>%
+  save_kable("../poster/corr_dat_tab.png", bs_theme = "default",
+             density = 300, zoom = 6)
+```
