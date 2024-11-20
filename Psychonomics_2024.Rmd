@@ -85,13 +85,17 @@ knitr::include_graphics("poster/erp_block_plot.png")
 knitr::include_graphics("poster/erp_plot_combo.png")
 ```
 
-<div class = "my-ack"><font size = 4>*Supported by BCS-2234907 to Zaharchuk and Van Hell, BCS-2041264 to Van Hell, and University Graduate Fellowship to Zaharchuk*</font></div>
+<img style = "padding: 0px; float:right;" src = "poster/qr_code.svg" width = 7% height = 7%>
+
+<div style="margin-bottom:150px;">
+</div>
+
+<div class = "my-text"><font size = 4>*Supported by BCS-2234907 to Zaharchuk and Van Hell, BCS-2041264 to Van Hell, and University Graduate Fellowship to Zaharchuk*</font></div>
 
 # Key take-aways
 
 - Differential sensitivity to prime type emerged on the N1 as differences in priming decreased on the N400
 - N1 modulation may reflect a shift in selective attention toward acoustic information (Joos et al., 2014)
-- N400 modulation may reflect a concomitant shift away from lexical information
 - Accent adaptation may involve a shift from top-down to bottom-up word recognition mechanisms
 
 # Additional results
@@ -110,7 +114,7 @@ knitr::include_graphics("poster/corr_dat.svg")
 
 # Additional methods
 
-- Participants: 41 Penn State undergrads, grad students, and community members
+- Participants: 41 Penn State undergraduates, graduate students, and community members
   - Mean age of 20 (18-35)
   - One excluded from ERP analyses (head injury)
   - All grew up speaking English at home
